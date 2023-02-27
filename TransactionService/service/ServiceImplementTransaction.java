@@ -1,18 +1,17 @@
 package com.TransactionService.TransactionService.service;
 
+import brave.Tracer;
 import com.TransactionService.TransactionService.dao.PayTypeDao;
 import com.TransactionService.TransactionService.dao.TransactionDao;
 import com.TransactionService.TransactionService.entity.PayType;
 import com.TransactionService.TransactionService.entity.Transaction;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
-import org.springframework.jms.core.JmsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +29,9 @@ public class ServiceImplementTransaction implements ServiceTransaction {
     @Autowired
     PayTypeDao payTypeDao;
 
+    @Autowired
+    private Tracer tracer;
+
     private static String PATTERN_AMOUNT_TRANSACTION = "[0-9]+\\.[0-9]{2}";
     @Override
     public List<Transaction> findAll() {
@@ -44,13 +46,16 @@ public class ServiceImplementTransaction implements ServiceTransaction {
         try {
             Optional<Transaction> transaction = transactionDao.findById(id);
             if(transaction.isPresent()==true){
+                tracer.currentSpan().tag("transaction find","HttpStatus.ACCEPTED");
                 return new ResponseEntity( transaction, HttpStatus.ACCEPTED);
             }
+            tracer.currentSpan().tag("there are not Transactions that match this id","HttpStatus.BAD_REQUEST");
             return new ResponseEntity ("there are not Transactions that match this id" , HttpStatus.BAD_REQUEST);
 
         }catch (RuntimeException e){
 
             System.out.println("Exception: "+e);
+            tracer.currentSpan().tag("something go bad","HttpStatus.BAD_REQUEST");
             return new ResponseEntity ("something go bad" , HttpStatus.BAD_REQUEST);
         }
 
@@ -68,13 +73,15 @@ public class ServiceImplementTransaction implements ServiceTransaction {
                 }
             }
             if (returnListTransaction.size()>0){
+                tracer.currentSpan().tag("list transaction","HttpStatus.BAD_REQUEST");
                 return new ResponseEntity(listTransaction, HttpStatus.ACCEPTED) ;
             }
-
+            tracer.currentSpan().tag("There is not a Transaction in this date","HttpStatus.BAD_REQUEST");
             return new ResponseEntity("There is not a Transaction in this date", HttpStatus.BAD_REQUEST);
 
         }catch (Exception e){
             System.out.println("Exception: "+e);
+            tracer.currentSpan().tag("Something go bad","HttpStatus.BAD_REQUEST");
             return new ResponseEntity("Something go bad",HttpStatus.BAD_REQUEST);
         }
 
@@ -92,25 +99,30 @@ public class ServiceImplementTransaction implements ServiceTransaction {
                    PayType myPayType = checkPayType(payType);
                    if(myPayType != null){
 
-                       Boolean transactionCompleted = restTemplate.getForObject("http://localhost:8002/api/account/transaction/"+accountId+"/"+receiverAccountId+"/"+amount, Boolean.class);
-
+                       Boolean transactionCompleted = restTemplate.getForObject("http://account-service/api/account/transaction/"+accountId+"/"+receiverAccountId+"/"+amount, Boolean.class);
                        if(transactionCompleted){
-                           String accountNumber = restTemplate.getForObject("http://localhost:8002/api/account/findAccountNumber/"+accountId, String.class);
+                           String accountNumber = restTemplate.getForObject("http://account-service/api/account/findAccountNumber/"+accountId, String.class);
 
                            Transaction transaction = new Transaction( accountNumber,accountId,  receiverAccountId, LocalDateTime.now() , amount, myPayType.getType());
                            transactionDao.save(transaction);
+                           tracer.currentSpan().tag("transaction created","HttpStatus.ACCEPTED");
                            return new ResponseEntity( transaction, HttpStatus.ACCEPTED);
                        }
+                       tracer.currentSpan().tag("Not Enough salary","HttpStatus.BAD_REQUEST");
                        return new ResponseEntity("Not Enough salary", HttpStatus.BAD_REQUEST);
                    }
+                   tracer.currentSpan().tag("Not Enough salary","HttpStatus.BAD_REQUEST");
                    return new ResponseEntity("payType not accepted", HttpStatus.BAD_REQUEST);
                }
+               tracer.currentSpan().tag("amount not accepted","HttpStatus.BAD_REQUEST");
                return new ResponseEntity("amount not accepted", HttpStatus.BAD_REQUEST);
            }
+            tracer.currentSpan().tag("accounts not available","HttpStatus.BAD_REQUEST");
             return new ResponseEntity("accounts not available", HttpStatus.BAD_REQUEST);
 
         }catch(Exception e){
             System.out.println("Exception: "+e);
+            tracer.currentSpan().tag("something go bad","HttpStatus.BAD_REQUEST");
             return new ResponseEntity ("something go bad" , HttpStatus.BAD_REQUEST);
        }
 
@@ -118,8 +130,8 @@ public class ServiceImplementTransaction implements ServiceTransaction {
 
     private Boolean checkAccountExist(Long accountId,Long receiverId){
 
-        Boolean accountValidation = restTemplate.getForObject("http://localhost:8002/api/account/findActive/"+accountId, Boolean.class);
-        Boolean receiverAccountValidation = restTemplate.getForObject("http://localhost:8002/api/account/findActive/"+accountId, Boolean.class);
+        Boolean accountValidation = restTemplate.getForObject("http://account-service/api/account/findActive/"+accountId, Boolean.class);
+        Boolean receiverAccountValidation = restTemplate.getForObject("http://account-service/api/account/findActive/"+receiverId, Boolean.class);
 
         if(accountValidation && receiverAccountValidation ){
             return true;
